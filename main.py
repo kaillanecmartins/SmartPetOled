@@ -321,10 +321,7 @@ def ler_joystick():
 # ============================================================
 # CÍRCULO PREENCHIDO
 # ============================================================
-#
-# O driver SSD1306 utilizado não possui fill_circle().
-# Esta função cria um círculo utilizando fill_rect().
-#
+
 
 def desenhar_circulo_preenchido(
     cx,
@@ -1092,7 +1089,7 @@ def atualizar_rosto(
 oled.fill(0)
 
 oled.text(
-    "DASAI",
+    "Hello!",
     45,
     25
 )
