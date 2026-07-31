@@ -1,20 +1,43 @@
 from machine import Pin, I2C, ADC
 import ssd1306
 import time
+import random
 from aht10 import AHT10
 import network
 import ntptime
 
-WIFI_SSID = "kaillane"
-WIFI_PASSWORD = "20240712"
+
+# ============================================================
+# CONFIGURAÇÕES
+# ============================================================
+
+WIFI_SSID = "IFMA2"
+WIFI_PASSWORD = "ifma1234"
 
 CIDADE = "Sao Luis"
 PAIS = "MA"
 
-# UTC-3
+# São Luís = UTC-3
 FUSO_HORARIO = -3
 
-TEMPO_TELA = 5000  # 5 segundos
+# Tempo de cada tela
+TEMPO_TELA = 5000
+
+
+# ============================================================
+# CONFIGURAÇÕES DAS ANIMAÇÕES
+# ============================================================
+
+INTERVALO_PISCADA_MIN = 4000
+INTERVALO_PISCADA_MAX = 9000
+
+INTERVALO_OLHAR_MIN = 5000
+INTERVALO_OLHAR_MAX = 12000
+
+
+# ============================================================
+# OLED
+# ============================================================
 
 i2c = I2C(
     1,
@@ -28,6 +51,11 @@ oled = ssd1306.SSD1306_I2C(
     i2c
 )
 
+
+# ============================================================
+# AHT10
+# ============================================================
+
 i2c_aht = I2C(
     0,
     scl=Pin(1),
@@ -36,6 +64,10 @@ i2c_aht = I2C(
 
 aht10 = AHT10(i2c_aht)
 
+
+# ============================================================
+# BOTÕES
+# ============================================================
 
 btn_a = Pin(
     5,
@@ -50,10 +82,92 @@ btn_b = Pin(
 )
 
 
+# ============================================================
+# JOYSTICK
+# ============================================================
 
 joy_x = ADC(Pin(27))
 joy_y = ADC(Pin(26))
 
+
+# ============================================================
+# EXPRESSÕES
+# ============================================================
+
+expressoes = [
+    "DEFAULT",
+    "SMILE",
+    "ANGRY",
+    "SLEEP",
+    "CRY"
+]
+
+indice = 0
+
+
+# ============================================================
+# TELAS
+# ============================================================
+
+telas = [
+    "ROSTO",
+    "AMBIENTE",
+    "HORARIO"
+]
+
+tela_atual = 0
+
+
+# ============================================================
+# ESTADO DAS ANIMAÇÕES
+# ============================================================
+
+estado_animacao = "NORMAL"
+
+olhar_auto_x = 0
+olhar_auto_y = 0
+
+inicio_animacao = time.ticks_ms()
+
+proxima_piscada = time.ticks_add(
+    time.ticks_ms(),
+    random.randint(
+        INTERVALO_PISCADA_MIN,
+        INTERVALO_PISCADA_MAX
+    )
+)
+
+proximo_olhar = time.ticks_add(
+    time.ticks_ms(),
+    random.randint(
+        INTERVALO_OLHAR_MIN,
+        INTERVALO_OLHAR_MAX
+    )
+)
+
+
+# ============================================================
+# CONTROLE DAS TELAS
+# ============================================================
+
+ultima_troca_tela = time.ticks_ms()
+
+
+# ============================================================
+# SENSOR
+# ============================================================
+
+ultima_temperatura = 0
+ultima_umidade = 0
+
+ultima_leitura_sensor = 0
+
+INTERVALO_SENSOR = 2000
+
+
+# ============================================================
+# WIFI
+# ============================================================
 
 def conectar_wifi():
 
@@ -67,35 +181,57 @@ def conectar_wifi():
 
         print("Conectando ao Wi-Fi...")
 
-        wlan.connect(
-            WIFI_SSID,
-            WIFI_PASSWORD
-        )
+        try:
+
+            wlan.connect(
+                WIFI_SSID,
+                WIFI_PASSWORD
+            )
+
+        except Exception as erro:
+
+            print(
+                "Erro ao iniciar Wi-Fi:",
+                erro
+            )
+
+            return None
 
         tentativas = 0
 
         while not wlan.isconnected():
 
-            time.sleep(0.5)
+            time.sleep_ms(500)
 
             tentativas += 1
 
             if tentativas >= 20:
 
-                print("Falha ao conectar ao Wi-Fi")
+                print(
+                    "Falha ao conectar ao Wi-Fi"
+                )
 
                 return None
 
     print("Wi-Fi conectado")
-    print("IP:", wlan.ifconfig()[0])
+
+    print(
+        "IP:",
+        wlan.ifconfig()[0]
+    )
 
     return wlan
 
 
+# ============================================================
+# SINCRONIZAÇÃO DO HORÁRIO
+# ============================================================
 
 def sincronizar_hora():
 
-    print("Sincronizando horario...")
+    print(
+        "Sincronizando horario..."
+    )
 
     try:
 
@@ -118,14 +254,13 @@ def sincronizar_hora():
         return False
 
 
+# ============================================================
+# HORÁRIO LOCAL
+# ============================================================
 
 def hora_brasil():
 
     agora = time.localtime()
-
-    ano = agora[0]
-    mes = agora[1]
-    dia = agora[2]
 
     hora = agora[3]
     minuto = agora[4]
@@ -136,16 +271,17 @@ def hora_brasil():
     if hora < 0:
 
         hora += 24
-        dia -= 1
 
     elif hora >= 24:
 
         hora -= 24
-        dia += 1
 
     return hora, minuto, segundo
 
 
+# ============================================================
+# JOYSTICK
+# ============================================================
 
 def ler_joystick():
 
@@ -160,16 +296,113 @@ def ler_joystick():
         y - 32768
     ) / 32768
 
+    # Zona morta
+    if abs(norm_x) < 0.15:
+
+        norm_x = 0
+
+    if abs(norm_y) < 0.15:
+
+        norm_y = 0
+
+    # Movimento horizontal
     offset_x = int(
-        norm_x * 6
+        norm_x * 7
     )
 
+    # Movimento vertical invertido
     offset_y = int(
-        -norm_y * 3
+        -norm_y * 4
     )
 
     return offset_x, offset_y
 
+
+# ============================================================
+# CÍRCULO PREENCHIDO
+# ============================================================
+#
+# O driver SSD1306 utilizado não possui fill_circle().
+# Esta função cria um círculo utilizando fill_rect().
+#
+
+def desenhar_circulo_preenchido(
+    cx,
+    cy,
+    raio,
+    cor=1
+):
+
+    for y in range(
+        -raio,
+        raio + 1
+    ):
+
+        valor = (
+            raio * raio
+            - y * y
+        )
+
+        largura = int(
+            valor ** 0.5
+        )
+
+        oled.fill_rect(
+            cx - largura,
+            cy + y,
+            largura * 2 + 1,
+            1,
+            cor
+        )
+
+
+# ============================================================
+# OLHO RETANGULAR
+# ============================================================
+
+def desenhar_olho(
+    x,
+    y,
+    largura=18,
+    altura=32
+):
+
+    oled.fill_rect(
+        x,
+        y,
+        largura,
+        altura,
+        1
+    )
+
+
+# ============================================================
+# OLHOS NORMAIS
+# ============================================================
+
+def olhos_normais(
+    offset_x=0,
+    offset_y=0
+):
+
+    desenhar_olho(
+        30 + offset_x,
+        16 + offset_y,
+        18,
+        32
+    )
+
+    desenhar_olho(
+        80 + offset_x,
+        16 + offset_y,
+        18,
+        32
+    )
+
+
+# ============================================================
+# ROSTO DEFAULT
+# ============================================================
 
 def rosto_default(
     offset_x,
@@ -178,25 +411,15 @@ def rosto_default(
 
     oled.fill(0)
 
-    oled.fill_rect(
-        34 + offset_x,
-        22 + offset_y,
-        14,
-        28,
-        1
+    olhos_normais(
+        offset_x,
+        offset_y
     )
 
-    oled.fill_rect(
-        80 + offset_x,
-        22 + offset_y,
-        14,
-        28,
-        1
-    )
-
+    # Boca pequena
     oled.fill_rect(
         56,
-        50,
+        52,
         16,
         4,
         1
@@ -204,196 +427,343 @@ def rosto_default(
 
     oled.show()
 
+
+# ============================================================
+# ROSTO SMILE
+# ============================================================
 
 def rosto_smile():
 
     oled.fill(0)
 
-    oled.fill_rect(
+    # Olho esquerdo sorrindo
+
+    oled.line(
+        30,
         34,
-        30,
-        14,
-        8,
-        1
-    )
-
-    oled.fill_rect(
-        80,
-        30,
-        14,
-        8,
-        1
-    )
-
-    oled.fill_rect(
-        50,
-        44,
+        39,
         28,
-        10,
         1
+    )
+
+    oled.line(
+        39,
+        28,
+        48,
+        34,
+        1
+    )
+
+    # Olho direito sorrindo
+
+    oled.line(
+        80,
+        34,
+        89,
+        28,
+        1
+    )
+
+    oled.line(
+        89,
+        28,
+        98,
+        34,
+        1
+    )
+
+    # Sorriso
+
+    desenhar_circulo_preenchido(
+        64,
+        49,
+        13,
+        1
+    )
+
+    # Remove parte superior
+    # deixando somente a curva
+
+    oled.fill_rect(
+        48,
+        38,
+        32,
+        12,
+        0
     )
 
     oled.show()
 
+
+# ============================================================
+# ROSTO ANGRY
+# ============================================================
 
 def rosto_angry():
 
     oled.fill(0)
 
+    # Sobrancelha/olho esquerdo
+
     oled.line(
-        34,
-        26,
+        30,
+        24,
         48,
-        40,
+        32,
+        1
+    )
+
+    oled.line(
+        30,
+        25,
+        48,
+        35,
+        1
+    )
+
+    # Sobrancelha/olho direito
+
+    oled.line(
+        80,
+        32,
+        98,
+        24,
         1
     )
 
     oled.line(
         80,
-        40,
-        94,
-        26,
+        35,
+        98,
+        25,
         1
     )
 
+    # Boca
+
     oled.fill_rect(
-        56,
-        50,
-        16,
-        3,
+        55,
+        51,
+        18,
+        4,
         1
     )
 
     oled.show()
 
+
+# ============================================================
+# ROSTO SLEEP
+# ============================================================
 
 def rosto_sleep():
 
     oled.fill(0)
 
-    oled.line(
-        34,
-        36,
-        48,
-        36,
+    # Olho esquerdo fechado
+
+    oled.fill_rect(
+        30,
+        32,
+        18,
+        4,
         1
     )
 
-    oled.line(
+    # Olho direito fechado
+
+    oled.fill_rect(
         80,
-        36,
-        94,
-        36,
+        32,
+        18,
+        4,
         1
     )
+
+    # Boca
 
     oled.fill_rect(
         60,
-        50,
+        51,
         8,
-        6,
+        5,
         1
     )
 
+    # Z
+
     oled.text(
-        "Zz",
-        52,
-        40
+        "Z",
+        51,
+        20
+    )
+
+    oled.text(
+        "z",
+        94,
+        15
     )
 
     oled.show()
 
 
+# ============================================================
+# ROSTO CRY
+# ============================================================
+
 def rosto_cry():
 
     oled.fill(0)
 
-    oled.fill_rect(
-        34,
-        22,
-        14,
-        28,
-        1
+    # Olho esquerdo
+
+    desenhar_olho(
+        30,
+        16,
+        18,
+        32
     )
 
-    oled.fill_rect(
+    # Olho direito
+
+    desenhar_olho(
         80,
-        22,
-        14,
-        28,
+        16,
+        18,
+        32
+    )
+
+    # Lágrima esquerda
+
+    desenhar_circulo_preenchido(
+        39,
+        51,
+        3,
         1
     )
 
     oled.fill_rect(
-        40,
+        36,
         50,
-        4,
+        6,
         8,
+        1
+    )
+
+    # Lágrima direita
+
+    desenhar_circulo_preenchido(
+        89,
+        51,
+        3,
         1
     )
 
     oled.fill_rect(
         86,
         50,
-        4,
+        6,
         8,
         1
     )
 
+    # Boca triste
+
     oled.line(
         56,
-        54,
+        55,
+        64,
+        51,
+        1
+    )
+
+    oled.line(
+        64,
+        51,
         72,
-        50,
+        55,
         1
     )
 
     oled.show()
 
 
-def tela_temperatura():
+# ============================================================
+# PISCADA
+# ============================================================
+
+def rosto_blink():
+
+    oled.fill(0)
+
+    # Olho esquerdo fechado
+
+    oled.fill_rect(
+        30,
+        31,
+        18,
+        5,
+        1
+    )
+
+    # Olho direito fechado
+
+    oled.fill_rect(
+        80,
+        31,
+        18,
+        5,
+        1
+    )
+
+    # Boca
+
+    oled.fill_rect(
+        56,
+        52,
+        16,
+        4,
+        1
+    )
+
+    oled.show()
+
+
+# ============================================================
+# ATUALIZAR SENSOR
+# ============================================================
+
+def atualizar_sensor():
+
+    global ultima_temperatura
+    global ultima_umidade
+    global ultima_leitura_sensor
+
+    agora = time.ticks_ms()
+
+    if time.ticks_diff(
+        agora,
+        ultima_leitura_sensor
+    ) < INTERVALO_SENSOR:
+
+        return
+
+    ultima_leitura_sensor = agora
 
     try:
 
-        temperatura, umidade = aht10.medir()
+        (
+            ultima_temperatura,
+            ultima_umidade
+        ) = aht10.medir()
 
-        oled.fill(0)
-
-        oled.text(
-            "AMBIENTE",
-            30,
-            5
+        print(
+            "Temperatura:",
+            ultima_temperatura,
+            "C | Umidade:",
+            ultima_umidade,
+            "%"
         )
-
-        oled.text(
-            "Temp:",
-            5,
-            25
-        )
-
-        oled.text(
-            "{:.1f} C".format(
-                temperatura
-            ),
-            55,
-            25
-        )
-
-        oled.text(
-            "Umid:",
-            5,
-            42
-        )
-
-        oled.text(
-            "{:.1f} %".format(
-                umidade
-            ),
-            55,
-            42
-        )
-
-        oled.show()
 
     except Exception as erro:
 
@@ -402,17 +772,57 @@ def tela_temperatura():
             erro
         )
 
-        oled.fill(0)
 
-        oled.text(
-            "ERRO SENSOR",
-            20,
-            25
-        )
+# ============================================================
+# TELA TEMPERATURA / UMIDADE
+# ============================================================
 
-        oled.show()
+def tela_temperatura():
+
+    atualizar_sensor()
+
+    oled.fill(0)
+
+    oled.text(
+        "AMBIENTE",
+        30,
+        5
+    )
+
+    oled.text(
+        "Temp:",
+        5,
+        25
+    )
+
+    oled.text(
+        "{:.1f} C".format(
+            ultima_temperatura
+        ),
+        55,
+        25
+    )
+
+    oled.text(
+        "Umid:",
+        5,
+        42
+    )
+
+    oled.text(
+        "{:.1f} %".format(
+            ultima_umidade
+        ),
+        55,
+        42
+    )
+
+    oled.show()
 
 
+# ============================================================
+# TELA HORÁRIO
+# ============================================================
 
 def tela_horario():
 
@@ -450,16 +860,9 @@ def tela_horario():
     oled.show()
 
 
-expressoes = [
-    "DEFAULT",
-    "SMILE",
-    "ANGRY",
-    "SLEEP",
-    "CRY"
-]
-
-indice = 0
-
+# ============================================================
+# INICIAR WIFI
+# ============================================================
 
 wifi = conectar_wifi()
 
@@ -474,22 +877,273 @@ else:
     )
 
 
+# ============================================================
+# ANIMAÇÃO
+# ============================================================
 
-telas = [
-    "ROSTO",
-    "AMBIENTE",
-    "HORARIO"
-]
+def iniciar_piscada():
 
-tela_atual = 0
+    global estado_animacao
+    global inicio_animacao
 
-ultima_troca = time.ticks_ms()
+    estado_animacao = "PISCANDO"
 
+    inicio_animacao = time.ticks_ms()
+
+
+def atualizar_animacao():
+
+    global estado_animacao
+    global inicio_animacao
+    global proxima_piscada
+    global proximo_olhar
+    global olhar_auto_x
+    global olhar_auto_y
+
+    agora = time.ticks_ms()
+
+    # ========================================================
+    # PISCADA NORMAL
+    # ========================================================
+
+    if estado_animacao == "NORMAL":
+
+        if time.ticks_diff(
+            agora,
+            proxima_piscada
+        ) >= 0:
+
+            iniciar_piscada()
+
+            return
+
+    # ========================================================
+    # FINAL DA PISCADA
+    # ========================================================
+
+    elif estado_animacao == "PISCANDO":
+
+        if time.ticks_diff(
+            agora,
+            inicio_animacao
+        ) >= 120:
+
+            estado_animacao = "NORMAL"
+
+            proxima_piscada = time.ticks_add(
+                agora,
+                random.randint(
+                    INTERVALO_PISCADA_MIN,
+                    INTERVALO_PISCADA_MAX
+                )
+            )
+
+            proximo_olhar = time.ticks_add(
+                agora,
+                random.randint(
+                    INTERVALO_OLHAR_MIN,
+                    INTERVALO_OLHAR_MAX
+                )
+            )
+
+    # ========================================================
+    # OLHAR AUTOMÁTICO
+    # ========================================================
+
+    if estado_animacao == "NORMAL":
+
+        if time.ticks_diff(
+            agora,
+            proximo_olhar
+        ) >= 0:
+
+            olhar_auto_x = random.choice(
+                [-5, 0, 5]
+            )
+
+            olhar_auto_y = random.choice(
+                [-2, 0, 2]
+            )
+
+            estado_animacao = "OLHANDO"
+
+            inicio_animacao = agora
+
+    elif estado_animacao == "OLHANDO":
+
+        if time.ticks_diff(
+            agora,
+            inicio_animacao
+        ) >= 1000:
+
+            olhar_auto_x = 0
+            olhar_auto_y = 0
+
+            estado_animacao = "NORMAL"
+
+            proximo_olhar = time.ticks_add(
+                agora,
+                random.randint(
+                    INTERVALO_OLHAR_MIN,
+                    INTERVALO_OLHAR_MAX
+                )
+            )
+
+
+# ============================================================
+# ATUALIZAR ROSTO
+# ============================================================
+
+def atualizar_rosto(
+    offset_x,
+    offset_y
+):
+
+    estado = expressoes[indice]
+
+    # ========================================================
+    # PISCADA
+    # ========================================================
+
+    if estado_animacao == "PISCANDO":
+
+        rosto_blink()
+
+        return
+
+    # ========================================================
+    # DEFAULT
+    # ========================================================
+
+    if estado == "DEFAULT":
+
+        final_x = (
+            offset_x +
+            olhar_auto_x
+        )
+
+        final_y = (
+            offset_y +
+            olhar_auto_y
+        )
+
+        # Limite horizontal
+
+        if final_x > 7:
+
+            final_x = 7
+
+        if final_x < -7:
+
+            final_x = -7
+
+        # Limite vertical
+
+        if final_y > 4:
+
+            final_y = 4
+
+        if final_y < -4:
+
+            final_y = -4
+
+        rosto_default(
+            final_x,
+            final_y
+        )
+
+    # ========================================================
+    # SMILE
+    # ========================================================
+
+    elif estado == "SMILE":
+
+        rosto_smile()
+
+    # ========================================================
+    # ANGRY
+    # ========================================================
+
+    elif estado == "ANGRY":
+
+        rosto_angry()
+
+    # ========================================================
+    # SLEEP
+    # ========================================================
+
+    elif estado == "SLEEP":
+
+        rosto_sleep()
+
+    # ========================================================
+    # CRY
+    # ========================================================
+
+    elif estado == "CRY":
+
+        rosto_cry()
+
+
+# ============================================================
+# TELA DE INICIALIZAÇÃO
+# ============================================================
+
+oled.fill(0)
+
+oled.text(
+    "DASAI",
+    45,
+    25
+)
+
+oled.show()
+
+time.sleep_ms(1500)
+
+
+# ============================================================
+# RESET DOS TEMPORIZADORES
+# ============================================================
+
+proxima_piscada = time.ticks_add(
+    time.ticks_ms(),
+    random.randint(
+        INTERVALO_PISCADA_MIN,
+        INTERVALO_PISCADA_MAX
+    )
+)
+
+proximo_olhar = time.ticks_add(
+    time.ticks_ms(),
+    random.randint(
+        INTERVALO_OLHAR_MIN,
+        INTERVALO_OLHAR_MAX
+    )
+)
+
+ultima_troca_tela = time.ticks_ms()
+
+
+# ============================================================
+# LOOP PRINCIPAL
+# ============================================================
 
 while True:
 
+    agora = time.ticks_ms()
+
+    # ========================================================
+    # JOYSTICK
+    # ========================================================
+
     offset_x, offset_y = ler_joystick()
 
+
+    # ========================================================
+    # BOTÃO A
+    # Próxima expressão
+    # ========================================================
 
     if not btn_a.value():
 
@@ -505,6 +1159,11 @@ while True:
         time.sleep_ms(200)
 
 
+    # ========================================================
+    # BOTÃO B
+    # Expressão anterior
+    # ========================================================
+
     if not btn_b.value():
 
         indice = (
@@ -518,56 +1177,52 @@ while True:
 
         time.sleep_ms(200)
 
-    agora = time.ticks_ms()
+
+    # ========================================================
+    # TROCA DE TELA
+    # ========================================================
 
     if time.ticks_diff(
         agora,
-        ultima_troca
+        ultima_troca_tela
     ) >= TEMPO_TELA:
 
         tela_atual = (
             tela_atual + 1
         ) % len(telas)
 
-        ultima_troca = agora
+        ultima_troca_tela = agora
 
+
+    # ========================================================
+    # ANIMAÇÕES
+    # ========================================================
+
+    atualizar_animacao()
+
+
+    # ========================================================
+    # DESENHAR TELA
+    # ========================================================
 
     if telas[tela_atual] == "ROSTO":
 
-        estado = expressoes[indice]
-
-        if estado == "DEFAULT":
-
-            rosto_default(
-                offset_x,
-                offset_y
-            )
-
-        elif estado == "SMILE":
-
-            rosto_smile()
-
-        elif estado == "ANGRY":
-
-            rosto_angry()
-
-        elif estado == "SLEEP":
-
-            rosto_sleep()
-
-        elif estado == "CRY":
-
-            rosto_cry()
-
+        atualizar_rosto(
+            offset_x,
+            offset_y
+        )
 
     elif telas[tela_atual] == "AMBIENTE":
 
         tela_temperatura()
 
-
     elif telas[tela_atual] == "HORARIO":
 
         tela_horario()
 
+
+    # ========================================================
+    # INTERVALO DO LOOP
+    # ========================================================
 
     time.sleep_ms(50)
