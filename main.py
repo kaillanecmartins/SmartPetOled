@@ -1,10 +1,14 @@
 from machine import Pin, I2C, ADC
 import ssd1306
 import time
+from aht10 import AHT10
 
 
 i2c = I2C(1, scl=Pin(15), sda=Pin(14))
 oled = ssd1306.SSD1306_I2C(128, 64, i2c)
+
+i2c_aht = I2C(0,scl=Pin(1),sda=Pin(0))
+aht10 = AHT10(i2c_aht)
 
 
 btn_a = Pin(5, Pin.IN, Pin.PULL_UP)
@@ -82,6 +86,39 @@ def rosto_cry():
     oled.show()
 
 
+def tela_temperatura():
+    temperatura, umidade = aht10.medir()
+
+    oled.fill(0)
+
+    oled.text("AMBIENTE", 30, 5)
+
+    oled.text(
+        "Temp:",
+        5,
+        25
+    )
+
+    oled.text(
+        "{:.1f} C".format(temperatura),
+        55,
+        25
+    )
+
+    oled.text(
+        "Umid:",
+        5,
+        42
+    )
+
+    oled.text(
+        "{:.1f} %".format(umidade),
+        55,
+        42
+    )
+
+    oled.show()
+
 expressoes = ["DEFAULT", "SMILE", "ANGRY", "SLEEP", "CRY"]
 indice = 0
 
@@ -89,12 +126,10 @@ indice = 0
 while True:
     offset_x, offset_y = ler_joystick()
 
-    # Botão A -> próxima
     if not btn_a.value():
         indice = (indice + 1) % len(expressoes)
         time.sleep(0.2)
 
-    # Botão B -> anterior
     if not btn_b.value():
         indice = (indice - 1) % len(expressoes)
         time.sleep(0.2)
@@ -116,4 +151,10 @@ while True:
     elif estado == "CRY":
         rosto_cry()
 
-    time.sleep(0.05)
+    time.sleep(3)
+    
+    temperatura, umidade = aht10.medir()
+
+    tela_temperatura()
+
+    time.sleep(3)
